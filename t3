@@ -1,0 +1,125 @@
+---
+# Source: deis-workflow/templates/egress.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-egress
+spec:
+  egress:
+  - ports:
+    - port: 52617
+    - port: 5000
+---
+# Source: deis-workflow/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kcon-helm-deis-workflow
+  labels:
+    helm.sh/chart: deis-workflow-0.1.0
+    app.kubernetes.io/name: deis-workflow
+    app.kubernetes.io/instance: kcon-helm
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+---
+# Source: deis-workflow/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcon-helm-deis-workflow
+  labels:
+    helm.sh/chart: deis-workflow-0.1.0
+    app.kubernetes.io/name: deis-workflow
+    app.kubernetes.io/instance: kcon-helm
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 52617
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 64330
+      targetPort: http
+      name: kafka
+    - port: 5000
+      targetPort: http
+      name: helm-registry
+---
+# Source: deis-workflow/templates/scaledjob.yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: kcon-scaledjob               # Optional. ScaledJob label
+spec:
+  jobTargetRef:
+    parallelism: 10                            # [max number of desired pods](https://kubernetes.io/docs/concepts/workloads/controllers/job/#controlling-parallelism)
+    completions: 1                            # [desired number of successfully finished pods](https://kubernetes.io/docs/concepts/workloads/controllers/job/#controlling-parallelism)
+    activeDeadlineSeconds: 600                #  Specifies the duration in seconds relative to the startTime that the job may be active before the system tries to terminate it; value must be positive integer
+    backoffLimit: 2                           # Specifies the number of retries before marking this job failed. Defaults to 6
+    template: 
+      spec:
+        containers:
+          - name: kcon-pod
+            image: vinayakv9/sample:latest
+            ports:
+              - name: http
+                containerPort: 64330
+      restartPolicy: Never
+  pollingInterval: 30                         # Optional. Default: 30 seconds
+  successfulJobsHistoryLimit: 5               # Optional. Default: 100. How many completed jobs should be kept.
+  failedJobsHistoryLimit: 5                   # Optional. Default: 100. How many failed jobs should be kept.
+  envSourceContainerName: kcon-pod    # Optional. Default: .spec.JobTargetRef.template.spec.containers[0]
+  minReplicaCount: 10                         # Optional. Default: 0
+  maxReplicaCount: 100                        # Optional. Default: 100
+  rolloutStrategy: gradual                    # Deprecated: Use rollout.strategy instead (see below).
+  rollout:
+    strategy: gradual                         # Optional. Default: default. Which Rollout Strategy KEDA will use.
+    propagationPolicy: foreground             # Optional. Default: background. Kubernetes propagation policy for cleaning up existing jobs during rollout.
+  scalingStrategy:
+    strategy: "custom"                        # Optional. Default: default. Which Scaling Strategy to use. 
+    customScalingQueueLengthDeduction: 1      # Optional. A parameter to optimize custom ScalingStrategy.
+    customScalingRunningJobPercentage: "0.5"  # Optional. A parameter to optimize custom ScalingStrategy.
+    pendingPodConditions:                     # Optional. A parameter to calculate pending job count per the specified pod conditions
+      - "Ready"
+      - "PodScheduled"
+      - "AnyOtherCustomPodCondition"
+    multipleScalersCalculation : "max" # Optional. Default: max. Specifies how to calculate the target metrics when multiple scalers are defined.
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: 192.168.1.3:64330
+        consumerGroup: kafka-java-getting-started
+        topic: kcon-topic
+        lagThreshold: '5'
+        activationLagThreshold: '3'
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+        scaleToZeroOnInvalidOffset: "false"
+        excludePersistentLag: "false"
+        limitToPartitionsWithLag: "false"
+        version: 1.0.0
+        partitionLimitation: '1,2,10-20,31'
+---
+# Source: deis-workflow/templates/tests/test-connection.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "kcon-helm-deis-workflow-test-connection"
+  labels:
+    helm.sh/chart: deis-workflow-0.1.0
+    app.kubernetes.io/name: deis-workflow
+    app.kubernetes.io/instance: kcon-helm
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['kcon-helm-deis-workflow:52617']
+  restartPolicy: Never
