@@ -1,0 +1,9 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-egress
+spec:
+  egress:
+  - ports:
+    - port: 52617
+    - port: 5000
